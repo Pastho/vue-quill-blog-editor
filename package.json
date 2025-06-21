@@ -1,6 +1,6 @@
 {
   "name": "@pastho/vue-quill-blog-editor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "main": "dist/vue-quill-blog-editor.cjs.js",
   "module": "dist/vue-quill-blog-editor.es.js",
   "types": "dist/index.d.ts",
