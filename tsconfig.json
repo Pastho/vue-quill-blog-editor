@@ -1,5 +1,8 @@
 {
   "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "outDir": "dist",
     "target": "ESNext",
     "module": "ESNext",
     "strict": true,
@@ -10,5 +13,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tests"]
+  "include": ["src"]
 }

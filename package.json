@@ -5,11 +5,10 @@
   "module": "dist/vue-quill-blog-editor.es.js",
   "types": "dist/index.d.ts",
   "files": [
-    "dist",
-    "dist/quill.snow.css"
+    "dist"
   ],
   "scripts": {
-    "build": "vite build && node scripts/postbuild.js",
+    "build": "vue-tsc --declaration --emitDeclarationOnly --outDir dist && vite build && node scripts/postbuild.js",
     "test": "vitest run",
     "dev": "vite",
     "type-check": "vue-tsc --noEmit"
