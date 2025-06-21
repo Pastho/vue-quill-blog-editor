@@ -1,0 +1,41 @@
+{
+  "name": "@pastho/vue-quill-blog-editor",
+  "version": "1.0.0",
+  "main": "dist/vue-quill-blog-editor.cjs.js",
+  "module": "dist/vue-quill-blog-editor.es.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "dist/quill.snow.css"
+  ],
+  "scripts": {
+    "build": "vite build && node scripts/postbuild.js",
+    "test": "vitest run",
+    "dev": "vite",
+    "type-check": "vue-tsc --noEmit"
+  },
+  "peerDependencies": {
+    "quill": "^2.0.3",
+    "vue": "^3.3.0"
+  },
+  "keywords": [
+    "vue",
+    "editor",
+    "quill",
+    "component",
+    "vue3"
+  ],
+  "author": "Thomas Pasberg",
+  "license": "MIT",
+  "devDependencies": {
+    "@testing-library/vue": "^8.1.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0",
+    "typescript": "^5.0.0",
+    "vite": "^6.3.5",
+    "vitest": "^3.2.3",
+    "vue": "^3.3.0",
+    "vue-tsc": "^2.2.10"
+  }
+}
