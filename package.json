@@ -1,6 +1,6 @@
 {
   "name": "@pastho/vue-quill-blog-editor",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "main": "dist/vue-quill-blog-editor.cjs.js",
   "module": "dist/vue-quill-blog-editor.es.js",
   "types": "dist/index.d.ts",
@@ -8,7 +8,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "vue-tsc --declaration --emitDeclarationOnly --outDir dist && vite build && node scripts/postbuild.js",
+    "build": "vite build && node scripts/postbuild.js && vue-tsc --declaration --emitDeclarationOnly --outDir dist",
     "test": "vitest run",
     "dev": "vite",
     "type-check": "vue-tsc --noEmit"
