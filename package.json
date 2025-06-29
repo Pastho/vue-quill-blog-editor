@@ -1,9 +1,14 @@
 {
   "name": "@pastho/vue-quill-blog-editor",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "main": "dist/vue-quill-blog-editor.cjs.js",
   "module": "dist/vue-quill-blog-editor.es.js",
   "types": "dist/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Pastho/vue-quill-blog-editor.git"
+  },
+
   "files": [
     "dist"
   ],

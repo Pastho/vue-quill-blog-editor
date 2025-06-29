@@ -161,6 +161,11 @@ onMounted(async () => {
   // create quill editor
   quill = markRaw(new Quill(editorContainer.value, finalOptions));
 
+  quill!.clipboard.addMatcher('BR', function(node, delta) {
+    // Insert a custom blot for each <br>
+    return delta.insert({ br: true });
+  });
+
   quill.clipboard.dangerouslyPasteHTML(props.modelValue || '');
 
   // emit fundamental update events to calling component

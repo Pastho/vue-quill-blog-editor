@@ -1,4 +1,4 @@
-import {describe, it, expect, beforeEach, vi} from 'vitest'
+import {describe, it, expect, vi} from 'vitest'
 import {mount} from '@vue/test-utils'
 import QuillBlogEditor from '../../src/QuillBlogEditor.vue'
 import {nextTick} from 'vue'
@@ -11,7 +11,7 @@ vi.mock('quill', () => {
         static import = vi.fn().mockImplementation(() => function () {
         });
         root: HTMLElement;
-        clipboard: { dangerouslyPasteHTML: any };
+        clipboard: { dangerouslyPasteHTML: any, addMatcher: any };
         on: any;
         getLeaf = vi.fn().mockReturnValue([{parent: {tagName: 'P'}}]);
         insertEmbed = vi.fn();
@@ -22,6 +22,7 @@ vi.mock('quill', () => {
             this.root = container;
             this.clipboard = {
                 dangerouslyPasteHTML: vi.fn(),
+                addMatcher: vi.fn(),
             };
 
             // Capture event handlers in a shared object
