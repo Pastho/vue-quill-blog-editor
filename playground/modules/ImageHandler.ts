@@ -1,50 +1,85 @@
-import Quill from "quill";
+import Quill from 'quill';
 import ImageService from '../services/ImageService';
 
 const Module = Quill.import('core/module');
+const ImageBlot: any = Quill.import('formats/image');
 
-/**
- * The ImageHandler class is a custom module for handling image-related functionality within a Quill editor.
- * It allows users to interact with images embedded in the editor, including selecting images, displaying
- * a context menu for image-specific actions, and resizing images.
- *
- * This module also listens for content changes in the editor to detect and handle image removals.
- * It integrates with an external `ImageService` to perform clean-up tasks when an image is deleted.
- *
- * Example usage and integration should be handled externally.
- */
-class ImageHandler extends Module {
-    private contextMenuEl: HTMLElement | null = null;
+type Corner = 'nw' | 'ne' | 'sw' | 'se';
+type Align = 'left' | 'center' | 'right';
 
-    /**
-     * Constructor for the custom image handler.
-     *
-     * @param {Quill} quill - The Quill editor instance.
-     * @param {any} options - Configuration options for the image handler.
-     * @return {void} Initializes the image handler, sets up event listeners, and manages image removal detection.
-     */
-    constructor(quill: Quill, options: any) {
-        super(quill, options);
-        this.setupImageClickHandler();
-        this.setupDocumentClickHandler();
+const ALIGN_VALUES: readonly Align[] = ['left', 'center', 'right'];
 
-        // Listen for content changes to detect image removals
-        quill.on('text-change', (delta: any, oldDelta: any, source: any) => {
-            const oldImages = this.extractImageSources(oldDelta);
-            const newImages = this.extractImageSources(quill.getContents());
-            // Image URLs that existed before but not anymore = removed
-            const deleted = oldImages.filter((url: string) => !newImages.includes(url));
-            deleted.forEach(url => ImageService.delete(url));
-        });
-
+// Replaces Quill's default Image blot so an `image-align-{left,center,right}`
+// class on the <img> is recognized as a native format. Applying it via an
+// inline attributor instead would wrap the image in a span (the class would
+// land on the wrapper, not the img) and our CSS wouldn't match. Reading the
+// class in `formats()` and writing it in `format()` makes alignment a
+// first-class image format that round-trips through delta and HTML.
+class AlignedImage extends ImageBlot {
+    static formats(domNode: HTMLElement) {
+        const formats = ImageBlot.formats(domNode) || {};
+        for (const align of ALIGN_VALUES) {
+            if (domNode.classList.contains(`image-align-${align}`)) {
+                formats['image-align'] = align;
+                break;
+            }
+        }
+        return formats;
     }
 
-    /**
-     * Extracts image sources from a given Quill delta object.
-     *
-     * @param {any} delta - The Quill delta object containing operations.
-     * @return {string[]} An array of image source URLs extracted from the delta.
-     */
+    format(name: string, value: any) {
+        if (name === 'image-align') {
+            const img = this.domNode as HTMLImageElement;
+            ALIGN_VALUES.forEach(a => img.classList.remove(`image-align-${a}`));
+            if (value && ALIGN_VALUES.includes(value)) {
+                img.classList.add(`image-align-${value}`);
+            }
+        } else {
+            super.format(name, value);
+        }
+    }
+}
+
+Quill.register({'formats/image': AlignedImage}, true);
+
+interface DragState {
+    handle: Corner;
+    startX: number;
+    startW: number;
+    minW: number;
+    maxW: number;
+}
+
+const HANDLE_SIZE = 12;
+const MIN_WIDTH = 40;
+
+class ImageHandler extends Module {
+    private overlayEl: HTMLElement | null = null;
+    private selectedImg: HTMLImageElement | null = null;
+    private dragState: DragState | null = null;
+    private rafPending = false;
+
+    constructor(quill: Quill, options: any) {
+        super(quill, options);
+
+        this.setupImageClickHandler();
+        this.setupDocumentClickHandler();
+        this.setupRepositionHandlers();
+
+        quill.on('text-change', (_delta, oldDelta) => {
+            const oldImages = this.extractImageSources(oldDelta);
+            const newImages = this.extractImageSources(quill.getContents());
+            const deleted = oldImages.filter((url: string) => !newImages.includes(url));
+            deleted.forEach(url => ImageService.delete(url));
+
+            if (this.selectedImg && !this.quill.root.contains(this.selectedImg)) {
+                this.clearSelection();
+            } else if (this.selectedImg) {
+                this.scheduleReposition();
+            }
+        });
+    }
+
     extractImageSources(delta: any): string[] {
         const sources: string[] = [];
         (delta.ops || []).forEach((op: any) => {
@@ -55,164 +90,242 @@ class ImageHandler extends Module {
         return sources;
     }
 
-
-    /**
-     * Attaches a click event handler to the editor to manage image selection and context menu behavior.
-     * When an image is clicked, the handler applies a 'selected' class to the image and triggers a context menu.
-     * Clicking elsewhere in the editor deselects images and closes the context menu.
-     *
-     * @return {void} This method does not return a value.
-     */
-    setupImageClickHandler() {
+    private setupImageClickHandler() {
         const editorEl = this.quill.root;
-        if (!editorEl) return;
-
         editorEl.addEventListener('click', (e: MouseEvent) => {
             const target = e.target as HTMLElement;
             if (target && target.tagName === 'IMG') {
-                // Deselect other images
-                editorEl.querySelectorAll('img.image-selected').forEach((img: Element) => {
-                    img.classList.remove('image-selected');
-                });
-                // Select clicked image
-                target.classList.add('image-selected');
                 e.stopPropagation();
-                this.openContextMenu(target, e);
+                e.preventDefault();
+                this.selectImage(target as HTMLImageElement);
             } else {
-                editorEl.querySelectorAll('img.image-selected').forEach((img: Element) => {
-                    img.classList.remove('image-selected');
-                });
-                this.closeContextMenu();
+                this.clearSelection();
             }
+        });
+        // Prevent native drag of the image (interferes with our resize drag).
+        editorEl.addEventListener('dragstart', (e: DragEvent) => {
+            const t = e.target as HTMLElement;
+            if (t && t.tagName === 'IMG') e.preventDefault();
         });
     }
 
-    /**
-     * Sets up a click event handler on the document. This handler closes the context menu
-     * and deselects any selected images when a click occurs outside of the context menu.
-     *
-     * @return {void} Does not return a value.
-     */
-    setupDocumentClickHandler = () => {
-        document.addEventListener('click', (e) => {
-            if (this.contextMenuEl && !this.contextMenuEl.contains(e.target as Node)) {
-                this.closeContextMenu();
-                // Also deselect image
-                const editorEl = this.quill.root;
-                editorEl.querySelectorAll('img.image-selected').forEach((img: Element) => {
-                    img.classList.remove('image-selected');
-                });
-            }
+    private setupDocumentClickHandler() {
+        document.addEventListener('mousedown', (e) => {
+            if (!this.overlayEl || !this.selectedImg) return;
+            const target = e.target as Node;
+            if (this.overlayEl.contains(target)) return;
+            if (this.selectedImg === target) return;
+            this.clearSelection();
         });
-    };
+    }
 
-    /**
-     * Opens a context menu near the provided image element with options to adjust the image size.
-     *
-     * @param {HTMLElement} img - The image element near which the context menu will be displayed.
-     * @param {MouseEvent} e - The mouse event triggering the context menu.
-     * @return {void} This method does not return a value.
-     */
-    openContextMenu = (img: HTMLElement, e: MouseEvent) => {
-        this.closeContextMenu();
-        const menu = document.createElement('div');
-        menu.style.position = 'absolute';
-        menu.style.zIndex = '10000';
-        menu.style.background = '#fff';
-        menu.style.border = '1px solid #ccc';
-        menu.style.padding = '4px 10px';
-        menu.style.boxShadow = '0 2px 8px rgba(0,0,0,0.11)';
-        menu.style.borderRadius = '5px';
-        menu.style.fontSize = '14px';
-        menu.style.display = 'flex';
-        menu.style.gap = '6px';
-        menu.style.minWidth = 'fit-content';
-        menu.style.alignItems = 'center';
+    private setupRepositionHandlers() {
+        const reposition = () => this.scheduleReposition();
+        window.addEventListener('scroll', reposition, true);
+        window.addEventListener('resize', reposition);
+    }
 
-        const btnStyles = `
-            background: none;
-            border: none;
-            padding: 4px 10px;
-            cursor: pointer;
-            border-radius: 4px;
-            font: inherit;
-            transition: background 0.15s;
-        `;
+    private selectImage(img: HTMLImageElement) {
+        if (this.selectedImg === img) return;
+        this.clearSelection();
+        this.selectedImg = img;
+        img.classList.add('image-selected');
+        this.buildOverlay();
+        this.scheduleReposition();
+    }
 
-        const makeBtn = (label: string, size: 'small' | 'medium' | 'large') => {
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.textContent = label;
-            btn.setAttribute('style', btnStyles);
-            btn.onmouseover = () => { btn.style.background = '#f3f4f6'; };
-            btn.onmouseout = () => { btn.style.background = 'none'; };
-            btn.onclick = (ev) => {
-                ev.preventDefault();
-                ev.stopPropagation();
-                this.adjustImageSize(size);
-                this.closeContextMenu();
-            };
-            return btn;
+    private clearSelection() {
+        if (this.selectedImg) {
+            this.selectedImg.classList.remove('image-selected');
+            this.selectedImg = null;
+        }
+        if (this.overlayEl) {
+            this.overlayEl.remove();
+            this.overlayEl = null;
+        }
+    }
+
+    private buildOverlay() {
+        const overlay = document.createElement('div');
+        overlay.className = 'image-resize-overlay';
+        Object.assign(overlay.style, {
+            position: 'absolute',
+            pointerEvents: 'none',
+            boxSizing: 'border-box',
+            border: '2px solid #1976d2',
+            borderRadius: '2px',
+            zIndex: '9999',
+        } as Partial<CSSStyleDeclaration>);
+
+        const corners: Corner[] = ['nw', 'ne', 'sw', 'se'];
+        for (const corner of corners) {
+            overlay.appendChild(this.makeHandle(corner));
+        }
+        overlay.appendChild(this.buildToolbar());
+
+        document.body.appendChild(overlay);
+        this.overlayEl = overlay;
+    }
+
+    private makeHandle(corner: Corner): HTMLElement {
+        const h = document.createElement('div');
+        h.dataset.handle = corner;
+        Object.assign(h.style, {
+            position: 'absolute',
+            width: `${HANDLE_SIZE}px`,
+            height: `${HANDLE_SIZE}px`,
+            background: '#fff',
+            border: '2px solid #1976d2',
+            borderRadius: '2px',
+            pointerEvents: 'auto',
+            cursor: corner === 'nw' || corner === 'se' ? 'nwse-resize' : 'nesw-resize',
+            boxSizing: 'border-box',
+        } as Partial<CSSStyleDeclaration>);
+        const offset = `${-HANDLE_SIZE / 2}px`;
+        if (corner.includes('n')) h.style.top = offset; else h.style.bottom = offset;
+        if (corner.includes('w')) h.style.left = offset; else h.style.right = offset;
+
+        h.addEventListener('mousedown', (ev) => this.startDrag(ev, corner));
+        return h;
+    }
+
+    private buildToolbar(): HTMLElement {
+        const tb = document.createElement('div');
+        Object.assign(tb.style, {
+            position: 'absolute',
+            top: '-40px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            gap: '2px',
+            background: '#fff',
+            border: '1px solid #ccc',
+            borderRadius: '5px',
+            padding: '4px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            pointerEvents: 'auto',
+            font: '13px sans-serif',
+            whiteSpace: 'nowrap',
+        } as Partial<CSSStyleDeclaration>);
+
+        const mkBtn = (label: string, title: string, onClick: (ev: MouseEvent) => void) => {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.title = title;
+            b.textContent = label;
+            Object.assign(b.style, {
+                background: 'none',
+                border: 'none',
+                padding: '4px 8px',
+                cursor: 'pointer',
+                borderRadius: '3px',
+                font: 'inherit',
+                lineHeight: '1',
+            } as Partial<CSSStyleDeclaration>);
+            b.addEventListener('mouseenter', () => { b.style.background = '#f3f4f6'; });
+            b.addEventListener('mouseleave', () => { b.style.background = 'none'; });
+            b.addEventListener('mousedown', (ev) => { ev.stopPropagation(); ev.preventDefault(); });
+            b.addEventListener('click', (ev) => { ev.stopPropagation(); ev.preventDefault(); onClick(ev); });
+            return b;
         };
 
-        menu.appendChild(makeBtn("Small", "small"));
-        menu.appendChild(makeBtn("Medium", "medium"));
-        menu.appendChild(makeBtn("Large", "large"));
+        tb.appendChild(mkBtn('⬅', 'Align left', () => this.setAlignment('left')));
+        tb.appendChild(mkBtn('⬍', 'Center', () => this.setAlignment('center')));
+        tb.appendChild(mkBtn('➡', 'Align right', () => this.setAlignment('right')));
 
-        document.body.appendChild(menu);
-        this.contextMenuEl = menu;
+        const sep = document.createElement('span');
+        sep.style.cssText = 'width:1px;background:#ddd;margin:2px 4px;';
+        tb.appendChild(sep);
 
-        // Position menu horizontally at the top of the image
-        const rect = img.getBoundingClientRect();
-        const menuRect = menu.getBoundingClientRect();
-        menu.style.left = `${window.scrollX + rect.left + (rect.width - menu.offsetWidth) / 2}px`;
-        menu.style.top = `${window.scrollY + rect.top - menu.offsetHeight - 6}px`;
+        tb.appendChild(mkBtn('Reset', 'Clear alignment & size', () => this.resetImage()));
+        return tb;
+    }
 
-        // Safety: Show under image if not enough space above
-        if (rect.top - menu.offsetHeight - 6 < 0) {
-            menu.style.top = `${window.scrollY + rect.bottom + 6}px`;
-        }
-    };
+    private setAlignment(align: Align) {
+        if (!this.selectedImg) return;
+        const blot = (Quill as any).find(this.selectedImg);
+        if (!blot) return;
+        const index = this.quill.getIndex(blot);
+        this.quill.formatText(index, 1, 'image-align', align, 'user');
+        // The custom Image blot mutates classList in place, so the DOM node is
+        // preserved — just re-position the overlay around the image's new rect.
+        requestAnimationFrame(() => this.scheduleReposition());
+    }
 
-    /**
-     * Closes the context menu by removing its associated DOM element
-     * and setting the reference to null.
-     *
-     * @return {void} No value is returned.
-     */
-    closeContextMenu = () => {
-        if (this.contextMenuEl) {
-            this.contextMenuEl.remove();
-            this.contextMenuEl = null;
-        }
-    };
+    private resetImage() {
+        if (!this.selectedImg) return;
+        const blot = (Quill as any).find(this.selectedImg);
+        if (!blot) return;
+        const index = this.quill.getIndex(blot);
+        this.quill.formatText(index, 1, 'image-align', false, 'user');
+        this.selectedImg.removeAttribute('width');
+        this.selectedImg.removeAttribute('height');
+        this.quill.update('user');
+        requestAnimationFrame(() => this.scheduleReposition());
+    }
 
-    /**
-     * Adjusts the size of a selected image within the editor by applying specific CSS classes.
-     *
-     * @param {'small' | 'medium' | 'large'} size - The desired size of the image.
-     *                                              'small', 'medium', and 'large' correspond to specific width classes.
-     * @return {void} This method does not return a value.
-     */
-    adjustImageSize = (size: 'small' | 'medium' | 'large') => {
-        const editorEl = this.quill.root;
-        if (!editorEl) return;
-        const selectedImage = editorEl.querySelector('img.image-selected') as HTMLImageElement | null;
-        if (!selectedImage) return;
+    private startDrag(ev: MouseEvent, corner: Corner) {
+        if (!this.selectedImg) return;
+        ev.preventDefault();
+        ev.stopPropagation();
+        const rect = this.selectedImg.getBoundingClientRect();
+        const containerWidth = this.quill.root.clientWidth;
+        this.dragState = {
+            handle: corner,
+            startX: ev.clientX,
+            startW: rect.width,
+            minW: MIN_WIDTH,
+            maxW: containerWidth,
+        };
+        const onMove = (e: MouseEvent) => this.onDrag(e);
+        const onUp = () => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            this.endDrag();
+        };
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
 
-        selectedImage.classList.remove('w-3/5', 'w-4/5', 'w-full');
-        switch (size) {
-            case 'small':
-                selectedImage.classList.add('w-3/5');
-                break;
-            case 'medium':
-                selectedImage.classList.add('w-4/5');
-                break;
-            case 'large':
-                selectedImage.classList.add('w-full');
-                break;
-        }
-    };
+    private onDrag(e: MouseEvent) {
+        if (!this.dragState || !this.selectedImg) return;
+        const {handle, startX, startW, minW, maxW} = this.dragState;
+        const direction = handle.includes('w') ? -1 : 1;
+        const dx = (e.clientX - startX) * direction;
+        const newW = Math.round(Math.min(Math.max(startW + dx, minW), maxW));
+        // Aspect ratio is preserved by leaving height unset and relying on
+        // `.ql-editor img { height: auto }` from the playground stylesheet.
+        this.selectedImg.removeAttribute('height');
+        this.selectedImg.style.height = '';
+        this.selectedImg.setAttribute('width', String(newW));
+        this.scheduleReposition();
+    }
+
+    private endDrag() {
+        this.dragState = null;
+        // Force Quill to capture the attribute mutation in its delta.
+        this.quill.update('user');
+    }
+
+    private scheduleReposition() {
+        if (this.rafPending) return;
+        this.rafPending = true;
+        requestAnimationFrame(() => {
+            this.rafPending = false;
+            this.repositionOverlay();
+        });
+    }
+
+    private repositionOverlay() {
+        if (!this.overlayEl || !this.selectedImg) return;
+        const rect = this.selectedImg.getBoundingClientRect();
+        Object.assign(this.overlayEl.style, {
+            top: `${window.scrollY + rect.top}px`,
+            left: `${window.scrollX + rect.left}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+        });
+    }
 }
 
 export default ImageHandler;

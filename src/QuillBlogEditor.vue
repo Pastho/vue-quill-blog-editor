@@ -5,21 +5,20 @@
 </template>
 
 <script lang="ts" setup>
-import {markRaw, nextTick, onMounted, ref, watch} from 'vue';
+import {markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch} from 'vue';
 import Quill from 'quill';
 
 // --- Aditional Tags ---
 const Embed = Quill.import('blots/embed') as any;
 
 /**
- * Represents a Soft Line Break blot in the editor, extending the Embed class.
- * This blot is used to handle the representation of a line break ('br' HTML tag) in the document.
+ * Soft-line-break blot. Inserted on shift+enter and on pasted <br> nodes so a
+ * <br> survives Quill's delta round-trip instead of being collapsed.
  */
 class SoftLineBreakBlot extends Embed {
   static blotName = 'br';
   static tagName = 'br';
 
-  // both static methods are required when initializing the component
   static create(value?: unknown) {
     return super.create();
   }
@@ -40,7 +39,6 @@ const props = defineProps({
   formats: {type: Array as () => string[] | undefined, default: undefined},
   toolbar: {type: [String, Array], default: 'full'},
   options: {type: Object, default: () => ({})},
-  features: {type: Object, default: () => ({})},
 })
 
 // --- Emits ---
@@ -49,13 +47,10 @@ const emit = defineEmits(['update:modelValue', 'ready', 'text-change', 'focus', 
 // --- Refs ---
 const editorContainer = ref<HTMLElement | null>(null)
 let quill: Quill | null = null
+// Tracks the last value emitted to the parent so the modelValue watcher can
+// distinguish a parent-echoed update (skip) from a genuine external change (apply).
+let lastEmitted = ''
 
-/**
- * A constant object defining toolbar configuration presets for the text editor. Will be overwritten when providing the container when calling the editor component.
- *
- * - `full`: A preset configuration that includes a comprehensive set of toolbar options such as headers, text formatting, lists, indentation, alignment, block elements, media insertion, and clearing formatting.
- * - `basic`: A minimal toolbar configuration that includes only basic text formatting options and link insertion.
- */
 const TOOLBAR_PRESETS: Record<string, any[]> = {
   full: [
     [{header: [1, 2, 3, false]}],
@@ -73,24 +68,35 @@ const TOOLBAR_PRESETS: Record<string, any[]> = {
   ],
 }
 
+const resolveToolbar = (toolbar: unknown): any[] => {
+  if (Array.isArray(toolbar)) return toolbar;
+  if (typeof toolbar === 'string') {
+    const preset = TOOLBAR_PRESETS[toolbar];
+    if (preset) return preset;
+    console.warn(`[QuillBlogEditor] Unknown toolbar preset "${toolbar}", falling back to "full".`);
+  }
+  return TOOLBAR_PRESETS.full;
+};
+
 /**
- * Handles soft break insertion in a Quill editor instance. This function manages the insertion of `<br>` tags
- * based on the current selection range and the context of the Quill editor's content structure.
- *
- * @param {any} range - The current selection range in the Quill editor.
- * @param {any} context - Additional context or configuration for handling the soft break.
- * @returns {boolean} Returns `false` after handling the soft break to indicate no default action is needed.
+ * Inserts a <br> at the caret on shift+enter. Inserts a second <br> when the
+ * caret sits at the end of a block (no next leaf, or next leaf belongs to a
+ * different parent) so the empty line stays visible — Quill otherwise collapses
+ * a trailing <br>.
  */
-const softBreakHandler = (range: any, context: any) => {
+const softBreakHandler = (range: any, _context: any) => {
   if (!quill || !range) {
     return false
+  }
+
+  if (range.length > 0) {
+    quill.deleteText(range.index, range.length, Quill.sources.USER);
   }
 
   const currentLeaf = quill.getLeaf(range.index)[0];
   const nextLeaf = quill.getLeaf(range.index + 1)[0];
   quill.insertEmbed(range.index, 'br', true, Quill.sources.USER);
 
-  // At the end of the editor, OR next leaf has a different parent (<p>)
   if (currentLeaf != null && (nextLeaf === null || currentLeaf.parent !== nextLeaf.parent)) {
     quill.insertEmbed(range.index, 'br', true, Quill.sources.USER);
   }
@@ -101,24 +107,11 @@ const softBreakHandler = (range: any, context: any) => {
 };
 
 
-/**
- * Lifecycle hook executed when the component is mounted.
- *
- * - Waits for the next DOM update cycle.
- * - Initializes the Quill editor instance with merged module and option configurations,
- *   combining component defaults with additional options supplied via props.
- * - Sets the initial HTML content of the editor.
- * - Registers event listeners to emit updates when the editor's content or selection changes.
- * - Emits a 'ready' event once initialization is complete.
- *
- * @async
- */
 onMounted(async () => {
   await nextTick();
 
   if (!editorContainer.value) return;
 
-  // preparing fundamental modules for being merged with others from calling component
   const mergedModules: Record<string, any> = {
     keyboard: {
       bindings: {
@@ -130,12 +123,11 @@ onMounted(async () => {
       }
     },
 
-    toolbar: Array.isArray(props.toolbar)
-        ? props.toolbar
-        : TOOLBAR_PRESETS[props.toolbar] || TOOLBAR_PRESETS.full,
+    toolbar: resolveToolbar(props.toolbar),
   };
 
-  // merge additional modules supplied by calling component
+  // Merge consumer-supplied modules; toolbar is special-cased so the consumer
+  // can fully replace the resolved preset by providing options.modules.toolbar.
   if (props.options.modules) {
     for (const key of Object.keys(props.options.modules)) {
       if (key === 'toolbar') continue;
@@ -146,8 +138,7 @@ onMounted(async () => {
     }
   }
 
-  // extend basic options with supplied ones
-  const {modules, ...otherOptions} = props.options || {};
+  const {modules: _ignored, ...otherOptions} = props.options || {};
 
   const finalOptions = {
     theme: props.theme,
@@ -158,20 +149,20 @@ onMounted(async () => {
     ...otherOptions,
   };
 
-  // create quill editor
   quill = markRaw(new Quill(editorContainer.value, finalOptions));
 
-  quill!.clipboard.addMatcher('BR', function(node, delta) {
-    // Insert a custom blot for each <br>
-    return delta.insert({ br: true });
+  quill!.clipboard.addMatcher('BR', function (_node, delta) {
+    return delta.insert({br: true});
   });
 
   quill.clipboard.dangerouslyPasteHTML(props.modelValue || '');
+  lastEmitted = quill.root.innerHTML;
 
-  // emit fundamental update events to calling component
-  quill.on('text-change', (...args: any[]) => {
-    emit('update:modelValue', quill!.root.innerHTML)
-    emit('text-change')
+  quill.on('text-change', () => {
+    if (!quill) return;
+    lastEmitted = quill.root.innerHTML;
+    emit('update:modelValue', lastEmitted);
+    emit('text-change');
   });
 
   quill.on('selection-change', (range) => {
@@ -182,24 +173,27 @@ onMounted(async () => {
   emit('ready', quill);
 });
 
+onBeforeUnmount(() => {
+  quill = null;
+});
 
-/**
- * Watches for changes to the `modelValue` prop and synchronizes the Quill editor content.
- *
- * - If the Quill editor instance exists and the new value differs from the current editor HTML,
- *   updates the editor content to match the new `modelValue` using `dangerouslyPasteHTML`.
- * - Prevents unnecessary updates if the editor content is already in sync.
- *
- * @param {() => string} source - Reactive function returning the current `modelValue`.
- * @param {(newVal: string) => void} callback - Function called when `modelValue` changes, used to update the editor.
- */
 watch(
     () => props.modelValue,
     (newVal) => {
       if (!quill) return
+      // Parent echoed back what we just emitted — skip to preserve cursor.
+      if (newVal === lastEmitted) return
       if (newVal !== quill.root.innerHTML) {
         quill.clipboard.dangerouslyPasteHTML(newVal || '')
+        lastEmitted = quill.root.innerHTML
       }
+    }
+)
+
+watch(
+    () => props.readOnly,
+    (val) => {
+      quill?.enable(!val)
     }
 )
 </script>

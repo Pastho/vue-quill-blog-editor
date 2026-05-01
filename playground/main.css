@@ -16,12 +16,12 @@
 /* Lists */
 .ql-editor ul,
 .ql-editor ol {
-    padding-left: 1.8em;          /* both editor + preview */
+    padding-left: 1.8em;
 }
 
-/* Images */
+/* Images: keep responsive while preserving width attribute as the upper bound. */
 .ql-editor img {
-    max-width: 100%;              /* responsive in both places */
+    max-width: 100%;
     height: auto;
 }
 
@@ -29,9 +29,55 @@
     margin-bottom: 2em;
 }
 
+/* Image alignment classes — applied via the 'image-align' attributor in
+   playground/modules/ImageHandler.ts. Persisted in delta. */
+.ql-editor img.image-align-left {
+    float: left;
+    margin: 0.25em 1em 0.5em 0;
+}
+
+.ql-editor img.image-align-right {
+    float: right;
+    margin: 0.25em 0 0.5em 1em;
+}
+
+.ql-editor img.image-align-center {
+    display: block;
+    margin: 0.5em auto;
+    float: none;
+}
+
+/* Visual indicator while an image is selected for resize/align. */
 .ql-editor img.image-selected {
     outline: 2px solid #1976d2;
     outline-offset: 2px;
-    /* Optionally, add a soft glow */
     box-shadow: 0 0 4px #1976d277;
+}
+
+/* Avoid native browser drag while resizing. */
+.ql-editor img.image-selected {
+    user-select: none;
+    -webkit-user-drag: none;
+}
+
+/* Mirror alignment in the preview pane outside the editor. */
+.preview-wrapper img.image-align-left {
+    float: left;
+    margin: 0.25em 1em 0.5em 0;
+}
+
+.preview-wrapper img.image-align-right {
+    float: right;
+    margin: 0.25em 0 0.5em 1em;
+}
+
+.preview-wrapper img.image-align-center {
+    display: block;
+    margin: 0.5em auto;
+    float: none;
+}
+
+.preview-wrapper img {
+    max-width: 100%;
+    height: auto;
 }

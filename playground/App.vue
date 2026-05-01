@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import QuillBlogEditor from '../../vue-quill-blog-editor/src/QuillBlogEditor.vue'
+import {QuillBlogEditor} from '../src'
 import {ref} from 'vue'
 import Quill from 'quill';
 import ImageHandler from './modules/ImageHandler';

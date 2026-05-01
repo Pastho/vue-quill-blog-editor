@@ -118,9 +118,9 @@ vue-quill-blog-editor/
 │       └── ImageHandler.ts              # Example implementatio of a custom Quill module to handle images (e.g., resizing)
 │   └── services/
 │       └── ImageService.ts              # Encapsulates the service for uploading and deleting images from a server 
-├── tests/                               # Local test app
+├── tests/                               # Vitest test suite
 │   └── unit/
-│       └── QuillBlogEditor.spec.ts      # Collection of unit test to test the QuillBlogEditor integration with Vue
+│       └── QuillBlogEditor.spec.ts      # Unit tests covering the QuillBlogEditor integration with Vue
 ├── package.json
 ├── tsconfig.json
 ├── vite.config.ts

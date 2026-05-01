@@ -1,17 +1,32 @@
 // vite.config.ts
-import { defineConfig } from 'vite'
+import {defineConfig} from 'vite'
 import vue from '@vitejs/plugin-vue'
 import path from 'path'
 import fs from 'fs'
 
-const playgroundMode = fs.existsSync(path.resolve(__dirname, 'playground'))
+const playgroundDir = path.resolve(__dirname, 'playground')
+const playgroundMode = fs.existsSync(playgroundDir)
 
-export default defineConfig(({ command }) => {
+export default defineConfig(({command}) => {
     const isDev = command === 'serve'
 
     return {
-        root: '.', // serves from project root
+        // In dev, serve the playground app at `/`. In build, root is the project
+        // root so `src/index.ts` resolves as the library entry.
+        root: isDev && playgroundMode ? playgroundDir : '.',
         plugins: [vue()],
+        resolve: {
+            dedupe: ['vue', 'quill'],
+        },
+        server: isDev && playgroundMode
+            ? {
+                open: '/',
+                fs: {
+                    // Allow imports from `src/` even though dev root is `playground/`.
+                    allow: [__dirname],
+                },
+            }
+            : undefined,
         build: !isDev
             ? {
                 lib: {
@@ -23,17 +38,13 @@ export default defineConfig(({ command }) => {
                 rollupOptions: {
                     external: ['vue', 'quill'],
                     output: {
+                        exports: 'named',
                         globals: {
                             vue: 'Vue',
                             quill: 'Quill',
                         },
                     },
                 },
-            }
-            : undefined,
-        server: isDev && playgroundMode
-            ? {
-                open: '/playground/index.html',
             }
             : undefined,
     }
